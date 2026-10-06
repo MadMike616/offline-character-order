@@ -16,8 +16,6 @@ Use the arrows above the character list to cycle through:
 
 In Custom mode, select a character and press **Ctrl+W** to move it up or **Ctrl+S** to move it down one row. The updated order is saved to `custom_order` in `offline-character-order.toml`. Names not listed follow the game's original order. `native` is accepted as an alias for `most_recent`.
 
-Set `sort_mode` in `offline-character-order.toml` to one of `most_recent`, `level_descending`, `level_ascending`, `name_ascending`, `name_descending`, `class_level_descending`, or `custom` to choose the startup mode.
-
 ## Build
 
 Requirements:
@@ -56,4 +54,4 @@ Launch D2R through D2RLoader and open the Offline character selection screen. D2
 
 ## Compatibility note
 
-The plugin targets D2R 3.3.93847 under D2RLoader. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, and Custom-mode Ctrl+W/Ctrl+S ordering were validated in-game through 0.9.17. Version 0.9.18 raises both sort arrows by three layout units; confirm the visual alignment in-game. The selector-thread keyboard hook is installed only while the Offline selector is active. The character-list hook uses build-specific addresses and layout checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.
+The plugin targets D2R 3.3.93847 under D2RLoader. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, and Custom-mode Ctrl+W/Ctrl+S ordering were validated in-game through 0.9.17. Version 0.9.18 raises both sort arrows by three layout units. The selector-thread keyboard hook is installed only while the Offline selector is active. The character-list hook uses build-specific addresses and layout checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.
