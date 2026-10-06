@@ -3,4 +3,4 @@
 
 config_version = 1
 sort_mode = "name_ascending" # most_recent, level_descending, level_ascending, name_ascending, name_descending, class_level_descending, or custom
-custom_order = []
+custom_order = [] # Custom mode order; Ctrl+W/S moves the selected character.

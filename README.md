@@ -1,6 +1,6 @@
 # Offline Character Order
 
-**Version 0.9.13** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. D2RLoader lists the author as MadMike. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files.
+**Version 0.9.18** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. D2RLoader lists the author as MadMike. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files.
 
 ## Sort modes
 
@@ -12,8 +12,11 @@ Use the arrows above the character list to cycle through:
 4. A to Z
 5. Z to A
 6. Class — Amazon, Assassin, Barbarian, Druid, Necromancer, Paladin, Sorceress, Warlock; highest level first within each class
+7. Custom
 
-Set `sort_mode` in `offline-character-order.toml` to one of `most_recent`, `level_descending`, `level_ascending`, `name_ascending`, `name_descending`, `class_level_descending`, or `custom`. Custom mode uses `custom_order`; unlisted names follow in their original game order. `native` is accepted as an alias for `most_recent`.
+In Custom mode, select a character and press **Ctrl+W** to move it up or **Ctrl+S** to move it down one row. The updated order is saved to `custom_order` in `offline-character-order.toml`. Names not listed follow the game's original order. `native` is accepted as an alias for `most_recent`.
+
+Set `sort_mode` in `offline-character-order.toml` to one of `most_recent`, `level_descending`, `level_ascending`, `name_ascending`, `name_descending`, `class_level_descending`, or `custom` to choose the startup mode.
 
 ## Build
 
@@ -49,8 +52,8 @@ or the active mod's plugin folder:
 <D2R folder>/mods/<mod name>/d2rloader/plugins/
 ```
 
-Launch D2R through D2RLoader and open the Offline character selection screen. D2RLoader creates `d2rloader/config/offline-character-order.toml` the first time the plugin loads. The plugin is intended for the Offline list only and requires D2RLoader's ABI 4 resource, panel, shared-event, widget, and UI-thread services.
+Launch D2R through D2RLoader and open the Offline character selection screen. D2RLoader creates `d2rloader/config/offline-character-order.toml` the first time the plugin loads. The plugin is intended for the Offline list only and uses D2RLoader's ABI 4 resource, panel, shared-event, widget, and UI-thread services. Ctrl+W/S are captured only while the Offline character selector is active and Custom mode is selected.
 
 ## Compatibility note
 
-The plugin targets D2R 3.3.93847 under D2RLoader. Sorting, selection synchronization, arrow controls, and the 0.9.12 panel close on entering gameplay have been validated in-game. The character-list hook uses build-specific addresses and layout checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.
+The plugin targets D2R 3.3.93847 under D2RLoader. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, and Custom-mode Ctrl+W/Ctrl+S ordering were validated in-game through 0.9.17. Version 0.9.18 raises both sort arrows by three layout units; confirm the visual alignment in-game. The selector-thread keyboard hook is installed only while the Offline selector is active. The character-list hook uses build-specific addresses and layout checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.

@@ -37,7 +37,7 @@ inline constexpr char Layout[] = R"json({
       "type": "ButtonWidget",
       "name": "PreviousModeButton",
       "fields": {
-        "rect": { "x": -84, "y": -8 },
+        "rect": { "x": -84, "y": -11 },
         "filename": "d2rloader/offline-character-order/sort-arrow-left",
         "onClickMessage": "PanelManager:OpenPanel:OfflineCharacterOrderPreviousMode",
         "disabledFrame": 1,
@@ -49,7 +49,7 @@ inline constexpr char Layout[] = R"json({
       "type": "ButtonWidget",
       "name": "NextModeButton",
       "fields": {
-        "rect": { "x": 365, "y": -8 },
+        "rect": { "x": 365, "y": -11 },
         "filename": "d2rloader/offline-character-order/sort-arrow-right",
         "onClickMessage": "PanelManager:OpenPanel:OfflineCharacterOrderNextMode",
         "disabledFrame": 1,

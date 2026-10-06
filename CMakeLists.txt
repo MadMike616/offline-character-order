@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.29)
 
-project(OfflineCharacterOrder VERSION 0.9.13 LANGUAGES CXX RC)
+project(OfflineCharacterOrder VERSION 0.9.18 LANGUAGES CXX RC)
 
 include(FetchContent)
 
@@ -33,6 +33,7 @@ set_property(
 )
 target_link_libraries(offline_character_order PRIVATE
     D2RLPlugin::D2RLPlugin
+    User32
 )
 target_compile_features(offline_character_order PRIVATE cxx_std_20)
 target_compile_definitions(offline_character_order PRIVATE
