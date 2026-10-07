@@ -1,6 +1,6 @@
 # Offline Character Order
 
-**Version 0.9.18** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files.
+**Version 0.9.24** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. D2RLoader lists the author as MadMike. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files.
 
 ## Sort modes
 
@@ -54,4 +54,4 @@ Launch D2R through D2RLoader and open the Offline character selection screen. D2
 
 ## Compatibility note
 
-The plugin targets D2R 3.3.93847 under D2RLoader. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, and Custom-mode Ctrl+W/Ctrl+S ordering were validated in-game through 0.9.17. Version 0.9.18 raises both sort arrows by three layout units. The selector-thread keyboard hook is installed only while the Offline selector is active. The character-list hook uses build-specific addresses and layout checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.
+The plugin targets D2R 3.3.93847 under D2RLoader. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, Custom-mode Ctrl+W/Ctrl+S ordering, and preview/frame synchronization after deleting a character were validated in-game in 0.9.24. The character-list hook uses build-specific addresses and layout checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.
