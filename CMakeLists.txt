@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.29)
 
-project(OfflineCharacterOrder VERSION 0.9.24 LANGUAGES CXX RC)
+project(OfflineCharacterOrder VERSION 0.9.29 LANGUAGES CXX RC)
 
 include(FetchContent)
 
