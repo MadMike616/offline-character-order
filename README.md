@@ -1,6 +1,6 @@
 # Offline Character Order
 
-**Version 0.9.36** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. D2RLoader lists the author as MadMike. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files. The sort panel hides while modal overlays are open and closes when navigating away from character select.
+**Version 0.9.36** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files. The sort panel hides while modal overlays are open and closes when navigating away from character select.
 
 ## Sort modes
 
