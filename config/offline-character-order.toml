@@ -1,6 +1,47 @@
 # Offline Character Order
-# Only the Offline tab of the character selection screen is changed.
+# Only the Offline character list is changed. Character save files are untouched.
+# The sort arrows on the character screen also change and save the selected mode.
 
 config_version = 1
-sort_mode = "name_ascending" # most_recent, level_descending, level_ascending, name_ascending, name_descending, class_level_descending, or custom
-custom_order = [] # Custom mode order; Ctrl+W/S moves the selected character.
+
+# Starting sort mode. Choices: most_recent, level_descending, level_ascending,
+# name_ascending, name_descending, class_level_descending, or custom.
+sort_mode = "name_ascending"
+
+[ui]
+# UI positions and sizes use layout units relative to the plugin panel anchor.
+# Restart D2RLoader after editing these values.
+
+# Plaque size and position.
+plaque_x = 14
+plaque_y = 0
+plaque_width = 72
+plaque_height = 14
+
+# Arrow positions. A width or height of 0 keeps that sprite's authored size.
+left_arrow_x = -88
+left_arrow_y = -13
+left_arrow_width = 0
+left_arrow_height = 0
+right_arrow_x = 365
+right_arrow_y = -13
+right_arrow_width = 0
+right_arrow_height = 0
+
+# Mode label position and size.
+label_x = 160
+label_y = 28
+label_width = 72
+label_height = 14
+
+# D2R font face, such as BlizzardGlobal, Exocet, or Formal. Blank keeps default.
+label_font_face = ""
+
+# 0 keeps the game default; otherwise use a point size from 1 to 200.
+label_font_size = 0
+
+[custom]
+# Optional character order from the top row to the bottom row.
+# In Custom mode, select a character and press Ctrl+W to move it up or Ctrl+S
+# to move it down. The plugin removes names absent from a stable character list.
+custom_order = []
