@@ -1,6 +1,6 @@
 # Offline Character Order
 
-**Version 0.9.35** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files. The sort panel hides while modal overlays are open and closes when navigating away from character select.
+**Version 0.9.36** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. D2RLoader lists the author as MadMike. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files. The sort panel hides while modal overlays are open and closes when navigating away from character select.
 
 ## Sort modes
 
@@ -23,18 +23,20 @@ Edit the `[ui]` section in `d2rloader/config/offline-character-order.toml`, then
 ```toml
 # Plaque position and size.
 [ui]
+anchor_x = 0.845
+anchor_y = 0.0
 plaque_x = 14
 plaque_y = 0
 plaque_width = 72
 plaque_height = 14
 
 # Arrow positions. A width or height of 0 keeps that sprite's authored size.
-left_arrow_x = -88
-left_arrow_y = -13
+left_arrow_x = -36
+left_arrow_y = 7
 left_arrow_width = 0
 left_arrow_height = 0
-right_arrow_x = 365
-right_arrow_y = -13
+right_arrow_x = 379
+right_arrow_y = 7
 right_arrow_width = 0
 right_arrow_height = 0
 
@@ -43,7 +45,7 @@ label_x = 160
 label_y = 28
 label_width = 72
 label_height = 14
-label_font_face = ""
+label_font_face = "Exocet"
 label_font_size = 0
 
 # Keep the actively changing character order at the end of the file.
@@ -52,6 +54,8 @@ custom_order = []
 ```
 
 Change `left_arrow_*` and `right_arrow_*` independently to position or resize either button. Adjust `label_*` if you move or resize the plaque and want the text to follow it. `label_font_face` is a D2R font-face name, such as `BlizzardGlobal`, `Exocet`, or `Formal`; leave it blank to retain the current default. Windows-installed fonts such as Arial are not loaded automatically by D2R, so entering their names alone falls back to the game default. Set `label_font_size` to a point size from 1 to 200, or `0` to retain the current default.
+
+`anchor_x` and `anchor_y` position the entire plugin panel as normalized screen coordinates from `0.0` to `1.0`. The defaults, `0.845` and `0.0`, place it above the character list; the other position values remain offsets from this anchor.
 
 ## Build
 

@@ -12,6 +12,10 @@ sort_mode = "name_ascending"
 # UI positions and sizes use layout units relative to the plugin panel anchor.
 # Restart D2RLoader after editing these values.
 
+# Panel anchor as normalized screen coordinates (0.0 to 1.0).
+anchor_x = 0.845
+anchor_y = 0.0
+
 # Plaque size and position.
 plaque_x = 14
 plaque_y = 0
@@ -19,12 +23,12 @@ plaque_width = 72
 plaque_height = 14
 
 # Arrow positions. A width or height of 0 keeps that sprite's authored size.
-left_arrow_x = -88
-left_arrow_y = -13
+left_arrow_x = -36
+left_arrow_y = 7
 left_arrow_width = 0
 left_arrow_height = 0
-right_arrow_x = 365
-right_arrow_y = -13
+right_arrow_x = 379
+right_arrow_y = 7
 right_arrow_width = 0
 right_arrow_height = 0
 
@@ -35,7 +39,7 @@ label_width = 72
 label_height = 14
 
 # D2R font face, such as BlizzardGlobal, Exocet, or Formal. Blank keeps default.
-label_font_face = ""
+label_font_face = "Exocet"
 
 # 0 keeps the game default; otherwise use a point size from 1 to 200.
 label_font_size = 0

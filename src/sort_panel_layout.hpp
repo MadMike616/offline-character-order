@@ -16,24 +16,26 @@ inline constexpr char PlaqueResourcePath[] =
     "data/hd/global/ui/d2rloader/offline-character-order/sort-mode-plaque.sprite";
 
 struct LayoutSettings {
+    double anchorX{0.845};
+    double anchorY{0.0};
     int plaqueX{14};
     int plaqueY{0};
     int plaqueWidth{72};
     int plaqueHeight{14};
-    int leftArrowX{-88};
-    int leftArrowY{-13};
-    int leftArrowWidth{};
-    int leftArrowHeight{};
-    int rightArrowX{365};
-    int rightArrowY{-13};
-    int rightArrowWidth{};
-    int rightArrowHeight{};
+    int leftArrowX{-36};
+    int leftArrowY{7};
+    int leftArrowWidth{0};
+    int leftArrowHeight{0};
+    int rightArrowX{379};
+    int rightArrowY{7};
+    int rightArrowWidth{0};
+    int rightArrowHeight{0};
     int labelX{160};
     int labelY{28};
     int labelWidth{72};
     int labelHeight{14};
     std::string labelFontFace{};
-    int labelFontSize{};
+    int labelFontSize{0};
 };
 
 inline constexpr char LayoutTemplate[] = R"json({
@@ -41,7 +43,7 @@ inline constexpr char LayoutTemplate[] = R"json({
   "name": "offline-character-order/SortModes",
   "fields": {
     "priority": 9004,
-    "anchor": { "x": 0.841, "y": 0.0 },
+    "anchor": { "x": @anchor_x@, "y": @anchor_y@ },
     "rect": { "x": 0, "y": 0, "width": 100, "height": 18 },
     "defaultWidget": "PreviousModeButton"
   },
