@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -46,6 +47,7 @@ constexpr std::int32_t MaximumCharacterRows = 32;
 constexpr std::size_t MaximumNameLength = 32;
 constexpr std::size_t MaximumMetadataLength = 128;
 constexpr std::size_t MaximumConfigBytes = 65536;
+constexpr std::uint32_t CustomOrderCleanupStableSamplesRequired = 4;
 
 constexpr std::array<std::uint8_t, 32> CharacterSelectEventExpected{
     0x40, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x80, 0x7A,
@@ -55,12 +57,52 @@ constexpr std::array<std::uint8_t, 32> CharacterSelectEventExpected{
 };
 
 constexpr char DefaultConfig[] = R"toml(# Offline Character Order
-# Only the Offline character selection screen is changed.
-# Use the arrows at the top of Offline character select to change the mode immediately, or edit this file and restart D2RLoader.
+# Only the Offline character list is changed. Character save files are untouched.
+# The sort arrows on the character screen also change and save the selected mode.
 
 config_version = 1
-sort_mode = "name_ascending" # most_recent, level_descending, level_ascending, name_ascending, name_descending, class_level_descending, or custom
-custom_order = [] # Custom mode order; Ctrl+W/S moves the selected character. Unlisted names follow the game's original order.
+
+# Starting sort mode. Choices: most_recent, level_descending, level_ascending,
+# name_ascending, name_descending, class_level_descending, or custom.
+sort_mode = "name_ascending"
+
+[ui]
+# UI positions and sizes use layout units relative to the plugin panel anchor.
+# Restart D2RLoader after editing these values.
+
+# Plaque size and position.
+plaque_x = 14
+plaque_y = 0
+plaque_width = 72
+plaque_height = 14
+
+# Arrow positions. A width or height of 0 keeps that sprite's authored size.
+left_arrow_x = -88
+left_arrow_y = -13
+left_arrow_width = 0
+left_arrow_height = 0
+right_arrow_x = 365
+right_arrow_y = -13
+right_arrow_width = 0
+right_arrow_height = 0
+
+# Mode label position and size.
+label_x = 160
+label_y = 28
+label_width = 72
+label_height = 14
+
+# D2R font face, such as BlizzardGlobal, Exocet, or Formal. Blank keeps default.
+label_font_face = ""
+
+# 0 keeps the game default; otherwise use a point size from 1 to 200.
+label_font_size = 0
+
+[custom]
+# Optional character order from the top row to the bottom row.
+# In Custom mode, select a character and press Ctrl+W to move it up or Ctrl+S
+# to move it down. The plugin removes names absent from a stable character list.
+custom_order = []
 )toml";
 
 enum class SortMode : std::uint8_t {
@@ -163,6 +205,8 @@ std::atomic_bool CustomModeActive{};
 std::vector<std::string> CustomOrderNames{};
 std::vector<std::string> NativeOrderNames{};
 std::vector<DatasetRowSignature> DatasetSignature{};
+std::vector<DatasetRowSignature> CustomOrderCleanupCandidateSignature{};
+std::uint32_t CustomOrderCleanupStableSamples{};
 std::vector<RowPosition> SlotPositions{};
 void* CachedListWidget{};
 void* ActiveOfflinePanelWidget{};
@@ -172,6 +216,8 @@ const D2RL::PanelServiceV1* SortPanelService{};
 const D2RL::SharedEventServiceV1* SortPanelEventService{};
 const D2RL::LifecycleServiceV1* GameplayLifecycleService{};
 const D2RL::WidgetServiceV1* SortPanelWidgetService{};
+OfflineCharacterOrder::SortPanel::LayoutSettings SortPanelLayoutSettings{};
+std::string SortPanelLayoutJson{};
 D2RL::Resources::RegistrationHandle SortPanelLayoutResourceHandle{
     D2RL::Resources::InvalidHandle};
 std::array<D2RL::Resources::RegistrationHandle, 3> SortPanelArtworkHandles{
@@ -220,7 +266,7 @@ constexpr D2RL::PluginInfo Info{
     .apiVersion = D2RL_PLUGIN_API_VERSION,
     .id = "offline-character-order",
     .name = "Offline Character Order",
-    .version = "0.9.29",
+    .version = "0.9.35",
     .author = "MadMike",
     .description = "Sorts Offline characters with an in-game sort mode panel.",
     .flags = D2RL::PluginFlags::Client | D2RL::PluginFlags::NativeHooks,
@@ -516,6 +562,59 @@ auto FindConfigString(std::string_view config, std::string_view key,
     return true;
 }
 
+auto IsUsableFontFace(std::string_view fontFace) noexcept -> bool {
+    if (fontFace.size() > 128) return false;
+    for (const unsigned char character : fontFace) {
+        if (character < 0x20 || character == 0x7F
+                || character == '"' || character == '\\') {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto FindConfigInteger(std::string_view config, std::string_view key,
+        int& value) noexcept -> bool {
+    std::size_t lineStart{};
+    while (lineStart < config.size()) {
+        const auto lineEnd = config.find('\n', lineStart);
+        auto line = config.substr(lineStart,
+            lineEnd == std::string_view::npos ? config.size() - lineStart
+                : lineEnd - lineStart);
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t'
+                || line.front() == '\r')) {
+            line.remove_prefix(1);
+        }
+        if (line.starts_with(key)
+                && (line.size() == key.size() || line[key.size()] == '='
+                    || line[key.size()] == ' ' || line[key.size()] == '\t')) {
+            const auto equals = line.find('=');
+            if (equals == std::string_view::npos) return false;
+            auto number = line.substr(equals + 1);
+            while (!number.empty() && (number.front() == ' '
+                    || number.front() == '\t')) {
+                number.remove_prefix(1);
+            }
+            int parsed{};
+            const auto result = std::from_chars(number.data(),
+                number.data() + number.size(), parsed);
+            if (result.ec != std::errc{}) return false;
+            auto trailing = std::string_view(result.ptr,
+                static_cast<std::size_t>(number.data() + number.size() - result.ptr));
+            while (!trailing.empty() && (trailing.front() == ' '
+                    || trailing.front() == '\t' || trailing.front() == '\r')) {
+                trailing.remove_prefix(1);
+            }
+            if (!trailing.empty() && trailing.front() != '#') return false;
+            value = parsed;
+            return true;
+        }
+        if (lineEnd == std::string_view::npos) break;
+        lineStart = lineEnd + 1;
+    }
+    return false;
+}
+
 auto ParseCustomOrder(std::string_view config) -> std::vector<std::string> {
     std::vector<std::string> result;
     const auto keyPosition = config.find("custom_order");
@@ -587,6 +686,40 @@ auto ReadConfiguration() noexcept -> bool {
         CustomModeActive.store(CurrentMode == SortMode::Custom,
             std::memory_order_release);
         CustomOrderNames = ParseCustomOrder(config);
+        SortPanelLayoutSettings = {};
+        auto readLayoutValue = [&](std::string_view key, int& target,
+                int minimum, int maximum) noexcept {
+            int parsed{};
+            if (FindConfigInteger(config, key, parsed)) {
+                target = std::clamp(parsed, minimum, maximum);
+            }
+        };
+        auto& layout = SortPanelLayoutSettings;
+        readLayoutValue("plaque_x", layout.plaqueX, -4096, 4096);
+        readLayoutValue("plaque_y", layout.plaqueY, -4096, 4096);
+        readLayoutValue("plaque_width", layout.plaqueWidth, 1, 4096);
+        readLayoutValue("plaque_height", layout.plaqueHeight, 1, 4096);
+        readLayoutValue("left_arrow_x", layout.leftArrowX, -4096, 4096);
+        readLayoutValue("left_arrow_y", layout.leftArrowY, -4096, 4096);
+        readLayoutValue("left_arrow_width", layout.leftArrowWidth, 0, 4096);
+        readLayoutValue("left_arrow_height", layout.leftArrowHeight, 0, 4096);
+        readLayoutValue("right_arrow_x", layout.rightArrowX, -4096, 4096);
+        readLayoutValue("right_arrow_y", layout.rightArrowY, -4096, 4096);
+        readLayoutValue("right_arrow_width", layout.rightArrowWidth, 0, 4096);
+        readLayoutValue("right_arrow_height", layout.rightArrowHeight, 0, 4096);
+        readLayoutValue("label_x", layout.labelX, -4096, 4096);
+        readLayoutValue("label_y", layout.labelY, -4096, 4096);
+        readLayoutValue("label_width", layout.labelWidth, 1, 4096);
+        readLayoutValue("label_height", layout.labelHeight, 1, 4096);
+        readLayoutValue("label_font_size", layout.labelFontSize, 0, 200);
+        std::string fontFace;
+        if (FindConfigString(config, "label_font_face", fontFace)) {
+            if (IsUsableFontFace(fontFace)) {
+                layout.labelFontFace = std::move(fontFace);
+            } else {
+                Context->LogWarn("OfflineCharacterOrder: invalid label_font_face; using the game default font.");
+            }
+        }
         return true;
     } catch (...) {
         Context->LogError("OfflineCharacterOrder: invalid configuration; no hook was installed.");
@@ -711,7 +844,7 @@ void LogMatchingTextWidgets(void* root, const std::vector<CharacterRow>& rows,
                     reinterpret_cast<const void*>(rootChildren),
                     static_cast<std::size_t>(rootCount) * sizeof(void*)))) {
             D2RL::LogWarn(Context,
-                "OfflineCharacterOrder 0.9.29: diagnostic root could not be enumerated.");
+                "OfflineCharacterOrder 0.9.35: diagnostic root could not be enumerated.");
             return;
         }
         for (std::int32_t index = 0; index < rootCount; ++index) {
@@ -762,7 +895,7 @@ void LogMatchingTextWidgets(void* root, const std::vector<CharacterRow>& rows,
                     (void)ReadField(entry.widget, RowPositionOffset + sizeof(x), y);
                     (void)ReadField(entry.widget, WidgetVisibleFlagOffset, visibleFlag);
                     D2RL::LogInfoF(Context,
-                        "OfflineCharacterOrder 0.9.29: %s text-widget=%p name=%s text=%s parent=%p local=%u,%u visibleFlag=%u",
+                        "OfflineCharacterOrder 0.9.35: %s text-widget=%p name=%s text=%s parent=%p local=%u,%u visibleFlag=%u",
                         stage, entry.widget, widgetName.c_str(), text.c_str(),
                         reinterpret_cast<void*>(parent), x, y,
                         static_cast<unsigned>(visibleFlag));
@@ -788,11 +921,11 @@ void LogMatchingTextWidgets(void* root, const std::vector<CharacterRow>& rows,
             }
         }
         D2RL::LogInfoF(Context,
-            "OfflineCharacterOrder 0.9.29: %s scanned=%zu pending=%zu",
+            "OfflineCharacterOrder 0.9.35: %s scanned=%zu pending=%zu",
             stage, visitedCount, pendingCount);
     } catch (...) {
         D2RL::LogWarn(Context,
-            "OfflineCharacterOrder 0.9.29: text-widget diagnostics stopped safely.");
+            "OfflineCharacterOrder 0.9.35: text-widget diagnostics stopped safely.");
     }
 }
 
@@ -802,7 +935,7 @@ void LogSelectionOverlaySnapshot(void* list, const char* stage,
         auto* const widget = FindNamedWidget(list, "Selection");
         if (widget == nullptr) {
             D2RL::LogInfoF(Context,
-                "OfflineCharacterOrder 0.9.29: %s selection-widget=not-found selectedIndex=%d",
+                "OfflineCharacterOrder 0.9.35: %s selection-widget=not-found selectedIndex=%d",
                 stage, selectedIndex);
             return;
         }
@@ -825,7 +958,7 @@ void LogSelectionOverlaySnapshot(void* list, const char* stage,
         const auto vtableRva = vtable >= reinterpret_cast<std::uintptr_t>(Base)
             ? vtable - reinterpret_cast<std::uintptr_t>(Base) : 0;
         D2RL::LogInfoF(Context,
-            "OfflineCharacterOrder 0.9.29: %s selection-widget=%p vtableRva=0x%llX rect=%u,%u,%u,%u visibleFlag=%u selectedIndex=%d children=%d",
+            "OfflineCharacterOrder 0.9.35: %s selection-widget=%p vtableRva=0x%llX rect=%u,%u,%u,%u visibleFlag=%u selectedIndex=%d children=%d",
             stage, widget, static_cast<unsigned long long>(vtableRva),
             x, y, width, height, static_cast<unsigned>(visibleFlag),
             selectedIndex, childCount);
@@ -855,7 +988,7 @@ void LogSelectionOverlaySnapshot(void* list, const char* stage,
             const auto childVtableRva = childVtable >= reinterpret_cast<std::uintptr_t>(Base)
                 ? childVtable - reinterpret_cast<std::uintptr_t>(Base) : 0;
             D2RL::LogInfoF(Context,
-                "OfflineCharacterOrder 0.9.29: %s selection-child[%d]=%p name=%s vtableRva=0x%llX rect=%u,%u,%u,%u visibleFlag=%u",
+                "OfflineCharacterOrder 0.9.35: %s selection-child[%d]=%p name=%s vtableRva=0x%llX rect=%u,%u,%u,%u visibleFlag=%u",
                 stage, index, child, childName.c_str(),
                 static_cast<unsigned long long>(childVtableRva),
                 childX, childY, childWidth, childHeight,
@@ -863,7 +996,7 @@ void LogSelectionOverlaySnapshot(void* list, const char* stage,
         }
     } catch (...) {
         D2RL::LogWarn(Context,
-            "OfflineCharacterOrder 0.9.29: selection-widget diagnostics stopped safely.");
+            "OfflineCharacterOrder 0.9.35: selection-widget diagnostics stopped safely.");
     }
 }
 
@@ -874,7 +1007,7 @@ void LogRowVisualChildren(void* list, const char* stage) noexcept {
         std::int32_t selectedIndex{};
         if (!ReadRows(list, rows, array, selectedIndex)) {
             D2RL::LogWarn(Context,
-                "OfflineCharacterOrder 0.9.29: row-child diagnostic could not validate rows.");
+                "OfflineCharacterOrder 0.9.35: row-child diagnostic could not validate rows.");
             return;
         }
         for (std::size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex) {
@@ -893,7 +1026,7 @@ void LogRowVisualChildren(void* list, const char* stage) noexcept {
             const auto rowVtableRva = rowVtable >= reinterpret_cast<std::uintptr_t>(Base)
                 ? rowVtable - reinterpret_cast<std::uintptr_t>(Base) : 0;
             D2RL::LogInfoF(Context,
-                "OfflineCharacterOrder 0.9.29: %s row[%zu] name=%s widget=%p vtableRva=0x%llX children=%d rect=%u,%u,%u,%u",
+                "OfflineCharacterOrder 0.9.35: %s row[%zu] name=%s widget=%p vtableRva=0x%llX children=%d rect=%u,%u,%u,%u",
                 stage, rowIndex, rows[rowIndex].name.c_str(), rows[rowIndex].widget,
                 static_cast<unsigned long long>(rowVtableRva), childCount,
                 rows[rowIndex].x, rows[rowIndex].y,
@@ -921,7 +1054,7 @@ void LogRowVisualChildren(void* list, const char* stage) noexcept {
                 const auto childVtableRva = childVtable >= reinterpret_cast<std::uintptr_t>(Base)
                     ? childVtable - reinterpret_cast<std::uintptr_t>(Base) : 0;
                 D2RL::LogInfoF(Context,
-                    "OfflineCharacterOrder 0.9.29: %s row[%zu].child[%d]=%p name=%s vtableRva=0x%llX rect=%u,%u,%u,%u visibleFlag=%u children=%d",
+                    "OfflineCharacterOrder 0.9.35: %s row[%zu].child[%d]=%p name=%s vtableRva=0x%llX rect=%u,%u,%u,%u visibleFlag=%u children=%d",
                     stage, rowIndex, childIndex, child, childName.c_str(),
                     static_cast<unsigned long long>(childVtableRva),
                     x, y, width, height, static_cast<unsigned>(visibleFlag),
@@ -930,7 +1063,7 @@ void LogRowVisualChildren(void* list, const char* stage) noexcept {
         }
     } catch (...) {
         D2RL::LogWarn(Context,
-            "OfflineCharacterOrder 0.9.29: row-child diagnostics stopped safely.");
+            "OfflineCharacterOrder 0.9.35: row-child diagnostics stopped safely.");
     }
 }
 
@@ -981,7 +1114,7 @@ void LogRowSnapshot(const char* stage, void* list) noexcept {
         const bool readable = FormatRowSnapshot(
             list, rows.data(), rows.size(), selectedIndex);
         D2RL::LogInfoF(Context,
-            "OfflineCharacterOrder 0.9.29: %s selectedIndex=%d rows=%s",
+            "OfflineCharacterOrder 0.9.35: %s selectedIndex=%d rows=%s",
             stage, selectedIndex, readable ? rows.data() : "unreadable");
         if (readable) {
             LogSelectionOverlaySnapshot(list, stage, selectedIndex);
@@ -991,7 +1124,7 @@ void LogRowSnapshot(const char* stage, void* list) noexcept {
             }
         }
     } catch (...) {
-        D2RL::LogWarn(Context, "OfflineCharacterOrder 0.9.29: row snapshot could not be formatted.");
+        D2RL::LogWarn(Context, "OfflineCharacterOrder 0.9.35: row snapshot could not be formatted.");
     }
 }
 
@@ -1083,7 +1216,7 @@ void CaptureNativeLayout(void* list, const std::vector<CharacterRow>& rows,
             SelectionOffsetKnown = true;
             if (selectedIndex < 0 || nearestSlot != static_cast<std::size_t>(selectedIndex)) {
                 D2RL::LogInfoF(Context,
-                    "OfflineCharacterOrder 0.9.29: selector geometry matched native slot=%zu while selectedIndex=%d; using row-relative offset=%d",
+                    "OfflineCharacterOrder 0.9.35: selector geometry matched native slot=%zu while selectedIndex=%d; using row-relative offset=%d",
                     nearestSlot, selectedIndex, SelectionOffsetY);
             }
         }
@@ -1280,7 +1413,7 @@ auto UpdateRows(void* list, bool* existingDatasetChanged = nullptr) -> bool {
     if (displaySelectedIndex >= 0) {
         if (!SelectionOffsetKnown || !SyncSelectionOverlay(list, displaySelectedIndex)) {
             D2RL::LogWarn(Context,
-            "OfflineCharacterOrder 0.9.29: selection overlay could not be synchronized; row order remains applied.");
+            "OfflineCharacterOrder 0.9.35: selection overlay could not be synchronized; row order remains applied.");
         } else if (selectedWidget != nullptr
                 && selectedWidget != LastSyncedSelectionWidget) {
             auto* const selection = FindNamedWidget(list, "Selection");
@@ -1288,7 +1421,7 @@ auto UpdateRows(void* list, bool* existingDatasetChanged = nullptr) -> bool {
             if (selection != nullptr
                     && ReadField(selection, RowPositionOffset + sizeof(std::int32_t), overlayY)) {
                 D2RL::LogInfoF(Context,
-                    "OfflineCharacterOrder 0.9.29: selection synced character=%s index=%d rowY=%u overlayY=%d offset=%d",
+                    "OfflineCharacterOrder 0.9.35: selection synced character=%s index=%d rowY=%u overlayY=%d offset=%d",
                     displayedRows[static_cast<std::size_t>(displaySelectedIndex)].name.c_str(),
                     displaySelectedIndex,
                     SlotPositions[static_cast<std::size_t>(displaySelectedIndex)].y,
@@ -1300,7 +1433,7 @@ auto UpdateRows(void* list, bool* existingDatasetChanged = nullptr) -> bool {
 
     if (positionsChanged) {
         D2RL::LogInfoF(Context,
-            "OfflineCharacterOrder 0.9.29: applied mode=%s rows=%zu visualOrderChanged=%d positionsChanged=%d nativeSelectedIndex=%d displaySelectedIndex=%d",
+            "OfflineCharacterOrder 0.9.35: applied mode=%s rows=%zu visualOrderChanged=%d positionsChanged=%d nativeSelectedIndex=%d displaySelectedIndex=%d",
             ModeName(CurrentMode), rows.size(), orderChanged ? 1 : 0,
             positionsChanged ? 1 : 0, selectedIndex, displaySelectedIndex);
     }
@@ -1369,17 +1502,21 @@ auto PersistCustomOrder() noexcept -> bool {
         return false;
     }
     try {
-        std::string array = "[";
+        std::string array = CustomOrderNames.empty() ? "[]" : "[\n";
         for (std::size_t index = 0; index < CustomOrderNames.size(); ++index) {
-            if (index > 0) array += ", ";
+            array += "    ";
             array.push_back('"');
             for (const char character : CustomOrderNames[index]) {
                 if (character == '\\' || character == '"') array.push_back('\\');
                 array.push_back(character);
             }
             array.push_back('"');
+            if (index + 1 < CustomOrderNames.size()) array.push_back(',');
+            array += " # row ";
+            array += std::to_string(index + 1);
+            array.push_back('\n');
         }
-        array.push_back(']');
+        if (!CustomOrderNames.empty()) array.push_back(']');
 
         std::string config(buffer.data());
         bool replaced = false;
@@ -1400,9 +1537,11 @@ auto PersistCustomOrder() noexcept -> bool {
                     ? std::string::npos : config.find('[', equals + 1);
                 const auto close = open == std::string::npos || open >= end
                     ? std::string::npos : config.find(']', open + 1);
-                if (open != std::string::npos && close != std::string::npos
-                        && close < end) {
-                    config.replace(open, close - open + 1, array);
+                if (open != std::string::npos && close != std::string::npos) {
+                    if (std::string_view(config).substr(open,
+                            close - open + 1) != array) {
+                        config.replace(open, close - open + 1, array);
+                    }
                     replaced = true;
                 }
                 break;
@@ -1419,6 +1558,74 @@ auto PersistCustomOrder() noexcept -> bool {
         return Context->WriteConfig(config.c_str());
     } catch (...) {
         return false;
+    }
+}
+
+void ObserveStableCustomOrderList(void* list) noexcept {
+    if (Context == nullptr || list == nullptr || CustomOrderNames.empty()) return;
+    try {
+        std::vector<CharacterRow> rows;
+        void* arrayAddress{};
+        std::int32_t selectedIndex{};
+        if (!ReadRows(list, rows, arrayAddress, selectedIndex)) {
+            CustomOrderCleanupCandidateSignature.clear();
+            CustomOrderCleanupStableSamples = 0;
+            return;
+        }
+        (void)arrayAddress;
+        (void)selectedIndex;
+
+        auto signature = WidgetSignature(rows);
+        if (CustomOrderCleanupStableSamples == 0
+                || signature != CustomOrderCleanupCandidateSignature) {
+            CustomOrderCleanupCandidateSignature = std::move(signature);
+            CustomOrderCleanupStableSamples = 1;
+            return;
+        }
+        if (CustomOrderCleanupStableSamples < CustomOrderCleanupStableSamplesRequired) {
+            ++CustomOrderCleanupStableSamples;
+        }
+        if (CustomOrderCleanupStableSamples < CustomOrderCleanupStableSamplesRequired) {
+            return;
+        }
+        if (CustomOrderCleanupStableSamples > CustomOrderCleanupStableSamplesRequired) {
+            return;
+        }
+
+        const auto liveNames = Names(rows);
+        std::vector<std::string> retainedNames;
+        retainedNames.reserve(std::min(CustomOrderNames.size(), liveNames.size()));
+        for (const auto& savedName : CustomOrderNames) {
+            const bool isLive = std::any_of(liveNames.begin(), liveNames.end(),
+                [&savedName](const auto& liveName) {
+                    return EqualInsensitive(savedName, liveName);
+                });
+            const bool alreadyRetained = std::any_of(retainedNames.begin(),
+                retainedNames.end(), [&savedName](const auto& retainedName) {
+                    return EqualInsensitive(savedName, retainedName);
+                });
+            if (isLive && !alreadyRetained) retainedNames.push_back(savedName);
+        }
+        const bool orderChanged = retainedNames != CustomOrderNames;
+        const auto removedCount = CustomOrderNames.size() - retainedNames.size();
+        auto previousNames = std::move(CustomOrderNames);
+        CustomOrderNames = std::move(retainedNames);
+        if (!PersistCustomOrder()) {
+            CustomOrderNames = std::move(previousNames);
+            CustomOrderCleanupStableSamples = 0;
+            Context->LogWarn("OfflineCharacterOrder: stale custom-order names were found, but the TOML file could not be updated.");
+            return;
+        }
+        if (orderChanged) {
+            D2RL::LogInfoF(Context,
+                "OfflineCharacterOrder: removed %zu stale or duplicate custom-order name(s).",
+                removedCount);
+        }
+        CustomOrderCleanupStableSamples = CustomOrderCleanupStableSamplesRequired + 1;
+    } catch (...) {
+        CustomOrderCleanupCandidateSignature.clear();
+        CustomOrderCleanupStableSamples = 0;
+        Context->LogWarn("OfflineCharacterOrder: custom-order cleanup skipped after a safe read failure.");
     }
 }
 
@@ -1602,7 +1809,7 @@ void __cdecl CustomOrderMoveUiCallback(
         }
         RefreshSortPanelLabel();
         D2RL::LogInfoF(Context,
-            "OfflineCharacterOrder 0.9.29: custom order moved character=%s direction=%d",
+            "OfflineCharacterOrder 0.9.35: custom order moved character=%s direction=%d",
             displayedRows[static_cast<std::size_t>(selectedRow)].name.c_str(), action->direction);
     } catch (...) {
         Context->LogError("OfflineCharacterOrder: custom move failed safely; the current list was not changed further.");
@@ -1810,7 +2017,7 @@ auto __cdecl OnSortPanelUiMessage(
                 if (OfflineSelectionActive.load(std::memory_order_acquire)
                         && IsSortPanelOpen(sortPanelOpen) && sortPanelOpen) {
                     D2RL::LogInfoF(Context,
-                        "OfflineCharacterOrder 0.9.29: suppressing sort panel for external panel=%.*s",
+                        "OfflineCharacterOrder 0.9.35: suppressing sort panel for external panel=%.*s",
                         static_cast<int>(message.size()), message.data());
                     SuppressSortPanelForOverlay(message);
                 }
@@ -1868,10 +2075,10 @@ auto __cdecl OnSortPanelUiMessage(
     CustomModeActive.store(CurrentMode == SortMode::Custom,
         std::memory_order_release);
     D2RL::LogInfoF(Context,
-        "OfflineCharacterOrder 0.9.29: sort arrow selected mode=%s direction=%d",
+        "OfflineCharacterOrder 0.9.35: sort arrow selected mode=%s direction=%d",
         ModeName(CurrentMode), direction);
     if (!PersistCurrentSortMode()) {
-        Context->LogWarn("OfflineCharacterOrder 0.9.29: selected sort mode is active, but the config file could not be updated.");
+        Context->LogWarn("OfflineCharacterOrder 0.9.35: selected sort mode is active, but the config file could not be updated.");
     }
     SortModeApplyPending.store(true, std::memory_order_release);
     RefreshSortPanelLabel();
@@ -1897,7 +2104,7 @@ void __cdecl SortPanelUiCallback(const D2RL::PluginContext*, void*) noexcept {
             Context, SortPanelRegistrationHandle);
         if (result != D2RL::Panels::Result::Success) {
             D2RL::LogWarnF(Context,
-                "OfflineCharacterOrder 0.9.29: sort panel could not be opened (result=%u).",
+                "OfflineCharacterOrder 0.9.35: sort panel could not be opened (result=%u).",
                 static_cast<unsigned>(result));
             return;
         }
@@ -1914,10 +2121,10 @@ void __cdecl SortPanelUiCallback(const D2RL::PluginContext*, void*) noexcept {
         if (ReadField(activePanel, CharacterSelectListOffset, list) && list != 0) {
             try {
                 if (!UpdateRows(reinterpret_cast<void*>(list))) {
-                    Context->LogWarn("OfflineCharacterOrder 0.9.29: selected sort mode could not be applied to the current character list.");
+                    Context->LogWarn("OfflineCharacterOrder 0.9.35: selected sort mode could not be applied to the current character list.");
                 }
             } catch (...) {
-                Context->LogError("OfflineCharacterOrder 0.9.29: sort mode update failed; the current list was left unchanged.");
+                Context->LogError("OfflineCharacterOrder 0.9.35: sort mode update failed; the current list was left unchanged.");
             }
         }
     }
@@ -1939,8 +2146,66 @@ void ScheduleSortPanelSync() noexcept {
     if (result != D2RL::Threads::Result::Success) {
         SortPanelSyncPending.store(false, std::memory_order_release);
         D2RL::LogWarnF(Context,
-            "OfflineCharacterOrder 0.9.29: sort panel UI scheduling failed with result=%u.",
+            "OfflineCharacterOrder 0.9.35: sort panel UI scheduling failed with result=%u.",
             static_cast<unsigned>(result));
+    }
+}
+
+void ReplaceLayoutToken(std::string& layout, std::string_view token,
+        std::string_view replacement) {
+    std::size_t position{};
+    while ((position = layout.find(token, position)) != std::string::npos) {
+        layout.replace(position, token.size(), replacement);
+        position += replacement.size();
+    }
+}
+
+auto ArrowSizeFields(int width, int height) -> std::string {
+    std::string fields;
+    if (width > 0) {
+        fields += ", \"width\": ";
+        fields += std::to_string(width);
+    }
+    if (height > 0) {
+        fields += ", \"height\": ";
+        fields += std::to_string(height);
+    }
+    return fields;
+}
+
+auto BuildSortPanelLayout() noexcept -> bool {
+    try {
+        std::string layout{OfflineCharacterOrder::SortPanel::LayoutTemplate};
+        const auto& settings = SortPanelLayoutSettings;
+        ReplaceLayoutToken(layout, "@plaque_x@", std::to_string(settings.plaqueX));
+        ReplaceLayoutToken(layout, "@plaque_y@", std::to_string(settings.plaqueY));
+        ReplaceLayoutToken(layout, "@plaque_width@", std::to_string(settings.plaqueWidth));
+        ReplaceLayoutToken(layout, "@plaque_height@", std::to_string(settings.plaqueHeight));
+        ReplaceLayoutToken(layout, "@left_arrow_x@", std::to_string(settings.leftArrowX));
+        ReplaceLayoutToken(layout, "@left_arrow_y@", std::to_string(settings.leftArrowY));
+        ReplaceLayoutToken(layout, "@left_arrow_size@",
+            ArrowSizeFields(settings.leftArrowWidth, settings.leftArrowHeight));
+        ReplaceLayoutToken(layout, "@right_arrow_x@", std::to_string(settings.rightArrowX));
+        ReplaceLayoutToken(layout, "@right_arrow_y@", std::to_string(settings.rightArrowY));
+        ReplaceLayoutToken(layout, "@right_arrow_size@",
+            ArrowSizeFields(settings.rightArrowWidth, settings.rightArrowHeight));
+        ReplaceLayoutToken(layout, "@label_x@", std::to_string(settings.labelX));
+        ReplaceLayoutToken(layout, "@label_y@", std::to_string(settings.labelY));
+        ReplaceLayoutToken(layout, "@label_width@", std::to_string(settings.labelWidth));
+        ReplaceLayoutToken(layout, "@label_height@", std::to_string(settings.labelHeight));
+        const auto fontFaceField = settings.labelFontFace.empty()
+            ? std::string{}
+            : "\"fontFace\": \"" + settings.labelFontFace + "\",";
+        ReplaceLayoutToken(layout, "@font_face_field@", fontFaceField);
+        const auto pointSize = settings.labelFontSize > 0
+            ? std::to_string(settings.labelFontSize)
+            : "\"$SmallPanelFontSize\"";
+        ReplaceLayoutToken(layout, "@point_size@", pointSize);
+        if (layout.find('@') != std::string::npos) return false;
+        SortPanelLayoutJson = std::move(layout);
+        return true;
+    } catch (...) {
+        return false;
     }
 }
 
@@ -1964,7 +2229,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
                 D2RL::ResourceServiceV1RequiredSize)
             || SortPanelResourceService->registerResource == nullptr
             || SortPanelResourceService->unregisterResource == nullptr) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: ResourceService is unavailable; the sort buttons will not be shown.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: ResourceService is unavailable; the sort buttons will not be shown.");
         return false;
     }
     if (context->QueryService(D2RL::ServiceId::Panel,
@@ -1977,7 +2242,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
             || SortPanelService->getPanelInfo == nullptr
             || SortPanelService->openPanel == nullptr
             || SortPanelService->closePanel == nullptr) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: PanelService is unavailable; the sort buttons will not be shown.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: PanelService is unavailable; the sort buttons will not be shown.");
         return false;
     }
     if (context->QueryService(D2RL::ServiceId::SharedEvent,
@@ -1987,7 +2252,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
                 D2RL::SharedEventServiceV1RequiredSize)
             || SortPanelEventService->registerUiMessageListener == nullptr
             || SortPanelEventService->unregisterUiMessageListener == nullptr) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: SharedEventService is unavailable; the sort buttons will not be shown.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: SharedEventService is unavailable; the sort buttons will not be shown.");
         return false;
     }
     if (context->QueryService(D2RL::ServiceId::Widget,
@@ -1999,7 +2264,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
             || SortPanelWidgetService->findWidget == nullptr
             || SortPanelWidgetService->setWidgetVisible == nullptr) {
         SortPanelWidgetService = nullptr;
-        context->LogWarn("OfflineCharacterOrder 0.9.29: WidgetService is unavailable; the mode label cannot be synchronized.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: WidgetService is unavailable; the mode label cannot be synchronized.");
         return false;
     }
 
@@ -2012,13 +2277,16 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
                 rightArrow)
             || !LoadEmbeddedResource(OFFLINE_CHARACTER_ORDER_MODE_PLAQUE_RESOURCE_ID,
                 modePlaque)) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: embedded sort artwork could not be loaded.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: embedded sort artwork could not be loaded.");
+        return false;
+    }
+    if (!BuildSortPanelLayout()) {
+        context->LogWarn("OfflineCharacterOrder: custom sort panel layout could not be generated.");
         return false;
     }
     if (!RegisterSortPanelResource(context,
             OfflineCharacterOrder::SortPanel::LayoutResourcePath,
-            OfflineCharacterOrder::SortPanel::Layout,
-            OfflineCharacterOrder::SortPanel::LayoutView.size(),
+            SortPanelLayoutJson.data(), SortPanelLayoutJson.size(),
             SortPanelLayoutResourceHandle)
             || !RegisterSortPanelResource(context,
                 OfflineCharacterOrder::SortPanel::LeftArrowResourcePath,
@@ -2029,7 +2297,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
             || !RegisterSortPanelResource(context,
                 OfflineCharacterOrder::SortPanel::PlaqueResourcePath,
                 modePlaque.data(), modePlaque.size(), SortPanelArtworkHandles[2])) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: sort panel layout or artwork registration failed.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: sort panel layout or artwork registration failed.");
         UnregisterSortPanelResources();
         return false;
     }
@@ -2042,7 +2310,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
     if (SortPanelService->registerPanel(context, &panel,
             &SortPanelRegistrationHandle) != D2RL::Panels::Result::Success
             || SortPanelRegistrationHandle == D2RL::Panels::InvalidHandle) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: sort panel could not be registered.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: sort panel could not be registered.");
         UnregisterSortPanelResources();
         return false;
     }
@@ -2058,7 +2326,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
     if (SortPanelEventService->registerUiMessageListener(context, &listener,
             &SortPanelMessageHandle) != D2RL::SharedEvents::Result::Success
             || SortPanelMessageHandle == D2RL::SharedEvents::InvalidHandle) {
-        context->LogWarn("OfflineCharacterOrder 0.9.29: sort panel arrow listener could not be registered.");
+        context->LogWarn("OfflineCharacterOrder 0.9.35: sort panel arrow listener could not be registered.");
         (void)SortPanelService->unregisterPanel(context,
             SortPanelRegistrationHandle);
         SortPanelRegistrationHandle = D2RL::Panels::InvalidHandle;
@@ -2093,7 +2361,7 @@ auto InitializeSortPanel(const D2RL::PluginContext* context) noexcept -> bool {
         GameplayLifecycleService = nullptr;
         return false;
     }
-    context->LogInfo("OfflineCharacterOrder 0.9.29: Offline sort arrows registered.");
+    context->LogInfo("OfflineCharacterOrder 0.9.35: Offline sort arrows registered.");
     return true;
 }
 
@@ -2158,8 +2426,10 @@ void __cdecl DeferredUiSortCallback(
         if (!UpdateRows(reinterpret_cast<void*>(list))) {
             if (!ReportedRowAccessFailure.exchange(true, std::memory_order_acq_rel)
                     && Context != nullptr) {
-                Context->LogWarn("OfflineCharacterOrder 0.9.29: deferred row layout validation failed; no changes were made in that update.");
+                Context->LogWarn("OfflineCharacterOrder 0.9.35: deferred row layout validation failed; no changes were made in that update.");
             }
+        } else {
+            ObserveStableCustomOrderList(reinterpret_cast<void*>(list));
         }
         if (capture) {
             LogRowSnapshot("deferred-after-update", reinterpret_cast<void*>(list));
@@ -2168,7 +2438,7 @@ void __cdecl DeferredUiSortCallback(
         Operational.store(false, std::memory_order_release);
         DeferredUiUpdateBudget.store(0, std::memory_order_release);
         if (Context != nullptr) {
-            Context->LogError("OfflineCharacterOrder 0.9.29: deferred UI update failed; sorting was disabled for this session.");
+            Context->LogError("OfflineCharacterOrder 0.9.35: deferred UI update failed; sorting was disabled for this session.");
         }
         return;
     }
@@ -2194,7 +2464,7 @@ void ScheduleDeferredUiSortUpdate() noexcept {
         DeferredUiUpdateBudget.store(0, std::memory_order_release);
         if (Context != nullptr) {
             D2RL::LogWarnF(Context,
-                "OfflineCharacterOrder 0.9.29: UI-thread scheduling failed with result=%u.",
+                "OfflineCharacterOrder 0.9.35: UI-thread scheduling failed with result=%u.",
                 static_cast<unsigned>(result));
         }
     }
@@ -2210,6 +2480,8 @@ void ResetCharacterListState(bool clearNativeOrder = true) noexcept {
     LastObservedNativeSelectedIndex = -2;
     if (clearNativeOrder) NativeOrderNames.clear();
     DatasetSignature.clear();
+    CustomOrderCleanupCandidateSignature.clear();
+    CustomOrderCleanupStableSamples = 0;
     SlotPositions.clear();
     CachedListWidget = nullptr;
 }
@@ -2296,12 +2568,12 @@ auto __fastcall CharacterSelectEventHook(void* panel, void* event) noexcept -> v
         if (!UpdateRows(reinterpret_cast<void*>(list), &datasetChangedBeforeEvent)
                 && !ReportedRowAccessFailure.exchange(true, std::memory_order_acq_rel)
                 && Context != nullptr) {
-            Context->LogWarn("OfflineCharacterOrder 0.9.29: row layout validation failed; no changes were made in that update.");
+            Context->LogWarn("OfflineCharacterOrder 0.9.35: row layout validation failed; no changes were made in that update.");
         }
     } catch (...) {
         Operational.store(false, std::memory_order_release);
         if (Context != nullptr) {
-            Context->LogError("OfflineCharacterOrder 0.9.29: update failed before the native event; sorting was disabled for this session.");
+            Context->LogError("OfflineCharacterOrder 0.9.35: update failed before the native event; sorting was disabled for this session.");
         }
     }
 
@@ -2340,7 +2612,7 @@ auto __fastcall CharacterSelectEventHook(void* panel, void* event) noexcept -> v
                 SelectedCharacterWidget = nativeSelection.widget;
                 SelectedCharacterName = nativeSelection.name;
                 D2RL::LogInfoF(Context,
-                    "OfflineCharacterOrder 0.9.29: initial list adopted native selection=%s index=%d",
+                    "OfflineCharacterOrder 0.9.35: initial list adopted native selection=%s index=%d",
                     SelectedCharacterName.c_str(), selectedIndexAfterEvent);
             }
             selectionChanged = true;
@@ -2378,7 +2650,7 @@ auto __fastcall CharacterSelectEventHook(void* panel, void* event) noexcept -> v
         ResetCharacterListState(false);
         selectionChanged = false;
         D2RL::LogInfoF(Context,
-            "OfflineCharacterOrder 0.9.29: character list rebuilt; refreshing row layout while preserving native index order (rows=%zu)",
+            "OfflineCharacterOrder 0.9.35: character list rebuilt; refreshing row layout while preserving native index order (rows=%zu)",
             rowsAfterEvent.size());
         DeferredUiUpdateBudget.store(8, std::memory_order_release);
         ScheduleDeferredUiSortUpdate();
@@ -2390,13 +2662,13 @@ auto __fastcall CharacterSelectEventHook(void* panel, void* event) noexcept -> v
                 && !UpdateRows(reinterpret_cast<void*>(list))
                 && !ReportedRowAccessFailure.exchange(true, std::memory_order_acq_rel)
                 && Context != nullptr) {
-            Context->LogWarn("OfflineCharacterOrder 0.9.29: row layout validation failed after the native event; no changes were made in that update.");
+            Context->LogWarn("OfflineCharacterOrder 0.9.35: row layout validation failed after the native event; no changes were made in that update.");
         }
     } catch (...) {
         Operational.store(false, std::memory_order_release);
         DeferredUiUpdateBudget.store(0, std::memory_order_release);
         if (Context != nullptr) {
-            Context->LogError("OfflineCharacterOrder 0.9.29: update failed after the native event; sorting was disabled for this session.");
+            Context->LogError("OfflineCharacterOrder 0.9.35: update failed after the native event; sorting was disabled for this session.");
         }
     }
 
@@ -2460,25 +2732,20 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(
             || UiThreadService->serviceSize < D2RL::ThreadServiceV1Size
             || UiThreadService->runOnUiThread == nullptr) {
         UiThreadService = nullptr;
-        Context->LogWarn("OfflineCharacterOrder 0.9.29: UI-thread service unavailable; deferred refresh will be skipped.");
-    }
-    if (std::memcmp(Base + CharacterSelectEventRva,
-            CharacterSelectEventExpected.data(), CharacterSelectEventExpected.size()) != 0) {
-        Context->LogError("OfflineCharacterOrder 0.9.29: unsupported D2R build; the 3.3.93847 CharacterSelectPanel event fingerprint did not match.");
-        return false;
+        Context->LogWarn("OfflineCharacterOrder 0.9.35: UI-thread service unavailable; deferred refresh will be skipped.");
     }
     if (!Context->InstallInlineHook(CharacterSelectEventRva,
             CharacterSelectEventExpected.data(),
             static_cast<std::uint32_t>(CharacterSelectEventExpected.size()),
             CharacterSelectEventHook, &OriginalCharacterSelectEvent)
             || OriginalCharacterSelectEvent == nullptr) {
-        Context->LogError("OfflineCharacterOrder 0.9.29: CharacterSelectPanel event hook could not be installed.");
+        Context->LogError("OfflineCharacterOrder 0.9.35: CharacterSelectPanel event hook could not be installed.");
         return false;
     }
     (void)InitializeSortPanel(Context);
     Operational.store(true, std::memory_order_release);
     D2RL::LogInfoF(Context,
-        "Offline Character Order 0.9.29 active; mode=%s, changes apply only to the Offline character list.",
+        "Offline Character Order 0.9.35 active; mode=%s, changes apply only to the Offline character list.",
         ModeName(CurrentMode));
     return true;
 }
