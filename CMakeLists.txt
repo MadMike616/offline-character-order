@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.29)
 
-project(OfflineCharacterOrder VERSION 0.9.36 LANGUAGES CXX RC)
+project(OfflineCharacterOrder VERSION 0.9.37 LANGUAGES CXX RC)
 
 include(FetchContent)
 
-# Pin the public SDK to the exact ABI-4 revision used by this release.
+# Pin the official stable SDK 0.4.0 revision (Plugin ABI 4).
 set(D2RLPLUGIN_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(D2RLPLUGIN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     D2RLoaderPluginSDK
     GIT_REPOSITORY https://github.com/D2RLoader/PluginSDK.git
-    GIT_TAG 6eb8f8b6192868214706bd6d528c5294f2f551b7
+    GIT_TAG 03a5af9e0feb3f95f95e148e330e01f6635950df
     GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable(D2RLoaderPluginSDK)

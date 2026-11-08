@@ -1,6 +1,6 @@
 # Offline Character Order
 
-**Version 0.9.36** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files. The sort panel hides while modal overlays are open and closes when navigating away from character select.
+**Version 0.9.37** is a D2RLoader plugin that sorts the Offline character list in Diablo II: Resurrected. D2RLoader lists the author as MadMike. It changes the order of the character rows and their click targets, and keeps the preview and selection border synchronized. It does not edit character save files. The sort panel hides while modal overlays are open and closes when navigating away from character select.
 
 ## Sort modes
 
@@ -73,7 +73,7 @@ cmake -S . -B build -A x64
 cmake --build build --config Release --target offline_character_order
 ```
 
-The DLL is written to `build/Release/d2rl-offline-character-order.dll`. The CMake file pins the SDK to commit `6eb8f8b6192868214706bd6d528c5294f2f551b7` from [D2RLoader/PluginSDK](https://github.com/D2RLoader/PluginSDK).
+The DLL is written to `build/Release/d2rl-offline-character-order.dll`. The CMake file pins the stable SDK 0.4.0 (Plugin ABI 4) to commit `03a5af9e0feb3f95f95e148e330e01f6635950df` from [D2RLoader/PluginSDK](https://github.com/D2RLoader/PluginSDK).
 
 The `.sprite` files in `assets/native` are the UI resources embedded in the DLL at compile time.
 
@@ -95,4 +95,4 @@ Launch D2R through D2RLoader and open the Offline character selection screen. D2
 
 ## Compatibility note
 
-The plugin was validated with D2R 3.3.93847 under D2RLoader. Version 0.9.30 removes the explicit executable build-fingerprint precheck; the author confirmed it works with both the non-Steam and Steam versions. The hook still asks D2RLoader to verify the expected bytes at its target before installation. Other hook addresses and character-list layouts remain build-specific. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, Custom-mode Ctrl+W/Ctrl+S ordering, and preview/frame synchronization after deleting a character were validated in-game in earlier versions. Version 0.9.29 hides the sort panel during Info/Options/Cinematics and Multiplayer overlays, then restores it when returning to character select; this was validated in-game.
+The plugin targets Windows x64 and D2RLoader Plugin ABI 4. Sorting, selection synchronization, arrow controls, immediate panel close on entering gameplay, Custom-mode Ctrl+W/Ctrl+S ordering, and preview/frame synchronization after deleting a character were validated in-game with v0.9.36 on D2R 3.3.93847. The author confirmed versions after 0.9.30 work with both Steam and non-Steam game installs. Version 0.9.37 updates the SDK pin to stable SDK 0.4.0 and is built with the Release configuration; its hook sites are unchanged. Runtime behavior for this rebuild has not been revalidated in-game. The character-list hook uses build-specific addresses and expected-byte checks. If a game update changes those structures, the plugin is designed to reject unknown layouts rather than reorder an unvalidated list.
